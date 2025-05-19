@@ -13,8 +13,10 @@ use waterfall::waterfall;
 public struct Event has key {
     id: UID,
     name: String,
+    date: String,
     // GPS location for the event
     location: String,
+    description: String,
     host_address: address,
     host_name: String,
     participants: VecSet<address>, //nft_address
@@ -59,23 +61,27 @@ fun init(ctx: &mut TxContext) {
 //------------------------------------------------ Entry Functions ------------------------------------------------//
 public entry fun create_event(
     _cap: &AdminCap,
-    name: String,
+    event_name: String,
+    date: String,
     location: String,
+    description: String,
     host_name: String,
     ctx: &mut TxContext,
 ): String {
     let sender = ctx.sender();
     let event = Event {
         id: object::new(ctx),
-        name,
+        name: event_name,
+        date,
         location,
+        description,
         host_address: sender,
-        host_name,
+        host_name: host_name,
         participants: vec_set::empty(),
     };
 
     transfer::share_object(event);
-    name
+    event_name
 }
 
 public entry fun sign_in(
@@ -140,6 +146,8 @@ fun test_create_event() {
     let event_name = waterfall::create_event(
         &admin_cap,
         b"Test Event".to_string(),
+        b"2025-05-20".to_string(),
+        b"test".to_string(),
         b"test".to_string(),
         b"test".to_string(),
         scenario.ctx(),
@@ -168,6 +176,8 @@ fun test_sign_in() {
     let _event_name = waterfall::create_event(
         &admin_cap,
         b"Test Event".to_string(),
+        b"2025-05-20".to_string(),
+        b"test".to_string(),
         b"test".to_string(),
         b"test".to_string(),
         scenario.ctx(),
@@ -215,6 +225,8 @@ fun test_add_friend() {
     let _event_name = waterfall::create_event(
         &admin_cap,
         b"Test Event".to_string(),
+        b"2025-05-20".to_string(),
+        b"test".to_string(),
         b"test".to_string(),
         b"test".to_string(),
         scenario.ctx(),
