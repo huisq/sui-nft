@@ -1,10 +1,8 @@
-module waterfall::waterfall;
+module waterfall03::waterfall03;
 
 use std::string::String;
 use sui::event;
-use sui::test_scenario;
 use sui::vec_set::{Self, VecSet};
-use waterfall::waterfall;
 
 //------------------------------------------------ Error Code ------------------------------------------------//
 // const EAlreadyInitialized: u64 = 0;
@@ -26,8 +24,15 @@ public struct AdminCap has key {
     id: UID,
 }
 
+public struct Events has key {
+    id: UID,
+    events: VecSet<ID>,
+}
+
 public struct Attendance has key {
     id: UID,
+    event_id: ID,
+    event_name: String,
     name: String,
     description: String,
     x_handle: String,
@@ -48,6 +53,11 @@ public struct FriendAdded has copy, drop {
     friend_nft_addr: address,
 }
 
+public struct EventCreated has copy, drop {
+    event_id: ID,
+    event_name: String,
+}
+
 //------------------------------------------------ Init ------------------------------------------------//
 
 // Give the contract deployer the admin capability
@@ -55,12 +65,18 @@ fun init(ctx: &mut TxContext) {
     let admin_cap = AdminCap {
         id: object::new(ctx),
     };
+    let events = Events {
+        id: object::new(ctx),
+        events: vec_set::empty(),
+    };
     transfer::transfer(admin_cap, ctx.sender());
+    transfer::transfer(events, ctx.sender());
 }
 
 //------------------------------------------------ Entry Functions ------------------------------------------------//
 public entry fun create_event(
     _cap: &AdminCap,
+    events: &mut Events,
     event_name: String,
     date: String,
     location: String,
@@ -69,8 +85,10 @@ public entry fun create_event(
     ctx: &mut TxContext,
 ): String {
     let sender = ctx.sender();
+    let event_id = object::new(ctx);
+    let event_id_string = object::uid_to_inner(&event_id);
     let event = Event {
-        id: object::new(ctx),
+        id: event_id,
         name: event_name,
         date,
         location,
@@ -80,7 +98,15 @@ public entry fun create_event(
         participants: vec_set::empty(),
     };
 
+    events.add_event(event_id_string);
+
     transfer::share_object(event);
+
+    event::emit(EventCreated {
+        event_id: event_id_string,
+        event_name,
+    });
+
     event_name
 }
 
@@ -97,6 +123,8 @@ public entry fun sign_in(
     let nft_addr = object::uid_to_address(&id);
     let nft = Attendance {
         id,
+        event_id: event.id.to_inner(),
+        event_name: event.name,
         name,
         description,
         x_handle,
@@ -128,23 +156,32 @@ public entry fun add_friend(
     });
 }
 
+//------------------------------------------------ Internal Helper Functions ------------------------------------------------//
+fun add_event(events: &mut Events, event_id: ID) {
+    events.events.insert(event_id);
+}
+
 //------------------------------------------------ Test Functions ------------------------------------------------//
 
 #[test]
 fun test_create_event() {
+    use sui::test_scenario;
+    use waterfall03::waterfall03;
     let event_host = @0xFACE;
 
     // Deploy contract
     let mut scenario = test_scenario::begin(event_host);
     {
-        waterfall::init(scenario.ctx());
+        waterfall03::init(scenario.ctx());
     };
 
     // Event host creates an event
     scenario.next_tx(event_host);
-    let admin_cap = scenario.take_from_sender<waterfall::AdminCap>();
-    let event_name = waterfall::create_event(
+    let admin_cap = scenario.take_from_sender<waterfall03::AdminCap>();
+    let mut events = scenario.take_from_sender<waterfall03::Events>();
+    let event_name = waterfall03::create_event(
         &admin_cap,
+        &mut events,
         b"Test Event".to_string(),
         b"2025-05-20".to_string(),
         b"test".to_string(),
@@ -156,25 +193,30 @@ fun test_create_event() {
 
     // Clean up
     scenario.return_to_sender(admin_cap);
+    scenario.return_to_sender(events);
     scenario.end();
 }
 
 #[test]
 fun test_sign_in() {
+    use sui::test_scenario;
+    use waterfall03::waterfall03;
     let event_host = @0xFACE;
     let attendee = @0xBEEF;
 
     // Deploy contract
     let mut scenario = test_scenario::begin(event_host);
     {
-        waterfall::init(scenario.ctx());
+        waterfall03::init(scenario.ctx());
     };
 
     // Event host creates an event
     scenario.next_tx(event_host);
-    let admin_cap = scenario.take_from_sender<waterfall::AdminCap>();
-    let _event_name = waterfall::create_event(
+    let admin_cap = scenario.take_from_sender<waterfall03::AdminCap>();
+    let mut events = scenario.take_from_sender<waterfall03::Events>();
+    let _event_name = waterfall03::create_event(
         &admin_cap,
+        &mut events,
         b"Test Event".to_string(),
         b"2025-05-20".to_string(),
         b"test".to_string(),
@@ -183,11 +225,12 @@ fun test_sign_in() {
         scenario.ctx(),
     );
     scenario.return_to_sender(admin_cap);
+    scenario.return_to_sender(events);
 
     // Attendee signs in to the event
     scenario.next_tx(attendee);
-    let mut event = scenario.take_shared<waterfall::Event>();
-    waterfall::sign_in(
+    let mut event = scenario.take_shared<waterfall03::Event>();
+    waterfall03::sign_in(
         &mut event,
         b"Test Attendee".to_string(),
         b"test description".to_string(),
@@ -198,7 +241,7 @@ fun test_sign_in() {
 
     // Check if the attendee received his NFT
     scenario.next_tx(attendee);
-    let attendance = scenario.take_from_sender<waterfall::Attendance>();
+    let attendance = scenario.take_from_sender<waterfall03::Attendance>();
     assert!(attendance.name == b"Test Attendee".to_string());
 
     // Clean up
@@ -209,6 +252,8 @@ fun test_sign_in() {
 
 #[test]
 fun test_add_friend() {
+    use sui::test_scenario;
+    use waterfall03::waterfall03;
     let event_host = @0xFACE;
     let attendee = @0xBEEF;
     let friend_addr = @0xCAFE;
@@ -216,14 +261,16 @@ fun test_add_friend() {
     // Deploy contract
     let mut scenario = test_scenario::begin(event_host);
     {
-        waterfall::init(scenario.ctx());
+        waterfall03::init(scenario.ctx());
     };
 
     // Event host creates an event
     scenario.next_tx(event_host);
-    let admin_cap = scenario.take_from_sender<waterfall::AdminCap>();
-    let _event_name = waterfall::create_event(
+    let admin_cap = scenario.take_from_sender<waterfall03::AdminCap>();
+    let mut events = scenario.take_from_sender<waterfall03::Events>();
+    let _event_name = waterfall03::create_event(
         &admin_cap,
+        &mut events,
         b"Test Event".to_string(),
         b"2025-05-20".to_string(),
         b"test".to_string(),
@@ -232,11 +279,11 @@ fun test_add_friend() {
         scenario.ctx(),
     );
     scenario.return_to_sender(admin_cap);
-
+    scenario.return_to_sender(events);
     // Attendee signs in to the event
     scenario.next_tx(attendee);
-    let mut event = scenario.take_shared<waterfall::Event>();
-    waterfall::sign_in(
+    let mut event = scenario.take_shared<waterfall03::Event>();
+    waterfall03::sign_in(
         &mut event,
         b"Test Attendee".to_string(),
         b"test description".to_string(),
@@ -248,8 +295,8 @@ fun test_add_friend() {
 
     // Attendee friend sign in
     scenario.next_tx(friend_addr);
-    let mut event = scenario.take_shared<waterfall::Event>();
-    waterfall::sign_in(
+    let mut event = scenario.take_shared<waterfall03::Event>();
+    waterfall03::sign_in(
         &mut event,
         b"Friend".to_string(),
         b"friend description".to_string(),
@@ -261,15 +308,15 @@ fun test_add_friend() {
 
     // Get friend's nft id
     scenario.next_tx(friend_addr);
-    let friend_nft = scenario.take_from_sender<waterfall::Attendance>();
+    let friend_nft = scenario.take_from_sender<waterfall03::Attendance>();
     let friend_nft_addr = object::uid_to_address(&friend_nft.id);
     scenario.return_to_sender(friend_nft);
 
     // Attendee add friend
     scenario.next_tx(attendee);
-    let mut attendance = scenario.take_from_sender<waterfall::Attendance>();
-    let event = scenario.take_shared<waterfall::Event>();
-    waterfall::add_friend(
+    let mut attendance = scenario.take_from_sender<waterfall03::Attendance>();
+    let event = scenario.take_shared<waterfall03::Event>();
+    waterfall03::add_friend(
         &event,
         &mut attendance,
         friend_nft_addr,
